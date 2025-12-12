@@ -13,6 +13,9 @@ on:
         default: 'true'
         type: boolean
 
+env:
+  UPSTREAM_REPO: hive-os/hive-pooltemplates
+
 jobs:
   update-pool-templates:
     runs-on: ubuntu-latest
@@ -31,49 +34,86 @@ jobs:
 
       - name: Add upstream remote and sync
         run: |
-          git remote add upstream https://github.com/hive-os/hive-pooltemplates.git || true
+          git remote add upstream "https://github.com/${{ env.UPSTREAM_REPO }}.git" || true
           git fetch upstream
           git checkout master || git checkout main
           git merge upstream/master --no-edit || git merge upstream/main --no-edit || echo "Already up to date or no upstream changes"
 
-      - name: Update mining4people.json
+      - name: Update pool templates
         run: |
-          # Check if the pool_templates directory exists
+          # This step updates the mining4people.json and mining4people-solo.json files.
+          # Customize this section to fetch data from your pool's API or data source.
+          # 
+          # Example: Fetch from an API endpoint
+          # curl -s "https://api.mining4people.com/pool-config" | jq '.' > pool_templates/mining4people.json
+          #
+          # For now, this workflow expects manual updates to the files or
+          # you can add your custom update logic here.
+          
           if [ -d "pool_templates" ]; then
-            echo "Updating mining4people.json..."
-            # The mining4people.json file should be updated from source
-            # This copies from the current repository's pool_templates directory
-            # In a real scenario, this would fetch from an API or external source
+            echo "Pool templates directory found"
+            
+            # Ensure the files exist
             if [ -f "pool_templates/mining4people.json" ]; then
-              echo "mining4people.json found and ready for update"
+              echo "mining4people.json exists and is ready for updates"
+            else
+              echo "Warning: mining4people.json not found"
             fi
-          fi
-
-      - name: Update mining4people-solo.json
-        run: |
-          # Check if the pool_templates directory exists
-          if [ -d "pool_templates" ]; then
-            echo "Updating mining4people-solo.json..."
-            # The mining4people-solo.json file should be updated from source
+            
             if [ -f "pool_templates/mining4people-solo.json" ]; then
-              echo "mining4people-solo.json found and ready for update"
+              echo "mining4people-solo.json exists and is ready for updates"
+            else
+              echo "Warning: mining4people-solo.json not found"
             fi
+          else
+            echo "Error: pool_templates directory not found"
+            exit 1
           fi
 
       - name: Validate JSON files
         run: |
           echo "Validating JSON files..."
-          python3 -m json.tool pool_templates/mining4people.json > /dev/null
-          python3 -m json.tool pool_templates/mining4people-solo.json > /dev/null
+          validation_failed=false
+          
+          if [ -f "pool_templates/mining4people.json" ]; then
+            if python3 -m json.tool pool_templates/mining4people.json > /dev/null 2>&1; then
+              echo "✓ mining4people.json is valid JSON"
+            else
+              echo "✗ mining4people.json has invalid JSON syntax"
+              validation_failed=true
+            fi
+          else
+            echo "⚠ mining4people.json not found, skipping validation"
+          fi
+          
+          if [ -f "pool_templates/mining4people-solo.json" ]; then
+            if python3 -m json.tool pool_templates/mining4people-solo.json > /dev/null 2>&1; then
+              echo "✓ mining4people-solo.json is valid JSON"
+            else
+              echo "✗ mining4people-solo.json has invalid JSON syntax"
+              validation_failed=true
+            fi
+          else
+            echo "⚠ mining4people-solo.json not found, skipping validation"
+          fi
+          
+          if [ "$validation_failed" = true ]; then
+            echo "JSON validation failed"
+            exit 1
+          fi
+          
           echo "JSON validation passed"
 
       - name: Check for changes
         id: check_changes
         run: |
-          if git diff --quiet; then
+          if git diff --quiet && git diff --cached --quiet; then
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "No changes detected"
           else
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            echo "Changes detected:"
+            git diff --stat
           fi
 
       - name: Commit changes
@@ -89,20 +129,35 @@ jobs:
 
       - name: Create Pull Request to upstream
         if: steps.check_changes.outputs.has_changes == 'true' && (github.event.inputs.create_pr == 'true' || github.event_name == 'schedule')
-        uses: peter-evans/create-pull-request@v6
-        with:
-          token: ${{ secrets.UPSTREAM_PAT }}
-          push-to-fork: ${{ github.repository }}
-          branch: update-mining4people-templates
-          title: "Update Mining4People pool templates"
-          body: |
-            This PR updates the Mining4People pool templates with the latest configuration.
-            
-            Updated files:
-            - `pool_templates/mining4people.json`
-            - `pool_templates/mining4people-solo.json`
-            
-            This PR was automatically generated by the [update-pool-templates workflow](https://github.com/${{ github.repository }}/actions/workflows/update-pool-templates.yml).
-          labels: |
-            automated
-            pool-update
+        env:
+          GH_TOKEN: ${{ secrets.UPSTREAM_PAT }}
+          UPSTREAM_REPO: ${{ env.UPSTREAM_REPO }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+        run: |
+          # Create a PR to the upstream repository using GitHub CLI
+          # The PR will be created from this fork to the upstream repo
+          
+          BRANCH_NAME="update-mining4people-templates-$(date +%Y%m%d)"
+          
+          # Create and push a new branch for the PR
+          git checkout -b "$BRANCH_NAME"
+          git push origin "$BRANCH_NAME"
+          
+          # Create the pull request body
+          PR_BODY="This PR updates the Mining4People pool templates with the latest configuration.
+
+          Updated files:
+          - pool_templates/mining4people.json
+          - pool_templates/mining4people-solo.json
+
+          This PR was automatically generated by the update-pool-templates workflow."
+          
+          # Create the pull request using gh CLI
+          gh pr create \
+            --repo "$UPSTREAM_REPO" \
+            --head "$GITHUB_REPOSITORY_OWNER:$BRANCH_NAME" \
+            --base master \
+            --title "Update Mining4People pool templates" \
+            --body "$PR_BODY" \
+            || echo "PR creation failed or PR already exists"
