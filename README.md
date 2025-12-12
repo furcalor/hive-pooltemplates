@@ -4,6 +4,44 @@ This is a list of pools that are available in Hive for creating Flight Sheet.
 If you found mistake or the configuration changed please make push request.
 If you want your pool to be listed here then create yourpool.json and push it, we will review it and add.
 
+## Automated Pool Template Updates
+
+This repository includes a GitHub Actions workflow that automatically updates the Mining4People pool templates and can submit pull requests to the upstream hive-os/hive-pooltemplates repository.
+
+### Workflow Features
+
+The `update-pool-templates.yml` workflow:
+- Runs daily at midnight UTC (configurable)
+- Can be triggered manually via GitHub Actions UI
+- Syncs the fork with the upstream hive-os/hive-pooltemplates repository
+- Validates JSON files before committing
+- Creates a pull request to the upstream repository when changes are detected
+
+### Required Secrets
+
+To enable automatic pull request creation to the upstream repository, you need to configure the following secret in your repository settings:
+
+| Secret | Description |
+|--------|-------------|
+| `UPSTREAM_PAT` | A GitHub Personal Access Token with `repo` scope that has write access to create pull requests in the upstream repository |
+
+### Manual Trigger
+
+You can manually trigger the workflow from the Actions tab in GitHub. The workflow accepts the following input:
+
+| Input | Description | Default |
+|-------|-------------|---------|
+| `create_pr` | Whether to create a pull request to upstream | `true` |
+
+### Updating Pool Templates
+
+To update the mining4people.json and mining4people-solo.json files:
+
+1. Make changes to the files in the `pool_templates/` directory
+2. Push to your fork
+3. Run the workflow manually or wait for the scheduled run
+4. The workflow will create a PR to the upstream repository
+
 
 ## Variables
 `%WAL%` - wallet address
