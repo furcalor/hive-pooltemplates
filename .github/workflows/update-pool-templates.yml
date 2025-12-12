@@ -33,11 +33,30 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Add upstream remote and sync
+        id: sync_upstream
         run: |
-          git remote add upstream "https://github.com/${{ env.UPSTREAM_REPO }}.git" || true
+          # Add upstream remote if it doesn't exist
+          if ! git remote get-url upstream > /dev/null 2>&1; then
+            git remote add upstream "https://github.com/${{ env.UPSTREAM_REPO }}.git"
+          fi
           git fetch upstream
-          git checkout master || git checkout main
-          git merge upstream/master --no-edit || git merge upstream/main --no-edit || echo "Already up to date or no upstream changes"
+          
+          # Determine which branch to use (master or main)
+          UPSTREAM_BRANCH=""
+          if git ls-remote --heads upstream master | grep -q master; then
+            UPSTREAM_BRANCH="master"
+          elif git ls-remote --heads upstream main | grep -q main; then
+            UPSTREAM_BRANCH="main"
+          else
+            echo "Error: Could not find master or main branch on upstream"
+            exit 1
+          fi
+          
+          echo "upstream_branch=$UPSTREAM_BRANCH" >> "$GITHUB_OUTPUT"
+          
+          # Checkout local branch and merge upstream
+          git checkout "$UPSTREAM_BRANCH" || git checkout -b "$UPSTREAM_BRANCH" "upstream/$UPSTREAM_BRANCH"
+          git merge "upstream/$UPSTREAM_BRANCH" --no-edit || echo "Already up to date or no upstream changes"
 
       - name: Update pool templates
         run: |
@@ -119,7 +138,13 @@ jobs:
       - name: Commit changes
         if: steps.check_changes.outputs.has_changes == 'true'
         run: |
-          git add pool_templates/mining4people.json pool_templates/mining4people-solo.json
+          # Only add files that exist
+          if [ -f "pool_templates/mining4people.json" ]; then
+            git add pool_templates/mining4people.json
+          fi
+          if [ -f "pool_templates/mining4people-solo.json" ]; then
+            git add pool_templates/mining4people-solo.json
+          fi
           git commit -m "Update mining4people pool templates" || echo "No changes to commit"
 
       - name: Push changes to fork
@@ -134,6 +159,7 @@ jobs:
           UPSTREAM_REPO: ${{ env.UPSTREAM_REPO }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          UPSTREAM_BRANCH: ${{ steps.sync_upstream.outputs.upstream_branch }}
         run: |
           # Create a PR to the upstream repository using GitHub CLI
           # The PR will be created from this fork to the upstream repo
@@ -157,7 +183,7 @@ jobs:
           gh pr create \
             --repo "$UPSTREAM_REPO" \
             --head "$GITHUB_REPOSITORY_OWNER:$BRANCH_NAME" \
-            --base master \
+            --base "$UPSTREAM_BRANCH" \
             --title "Update Mining4People pool templates" \
             --body "$PR_BODY" \
             || echo "PR creation failed or PR already exists"
